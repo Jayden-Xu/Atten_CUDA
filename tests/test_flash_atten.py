@@ -15,7 +15,7 @@ flash_atten = load(
 )
 
 def test_flash_atten():
-    print("Testing FlashAttention V2 correctness...")
+    print("Testing FlashAttention correctness...")
     batch_size, seq_len, dim = 4, 1024, 64 
 
     torch.manual_seed(0)

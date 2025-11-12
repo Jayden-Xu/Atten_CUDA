@@ -7,10 +7,10 @@
 using namespace std;
 
 __global__ void naive_atten_kernel(
-    const float *Q, // [batch_size, seq_len, dim]
-    const float *K,
-    const float *V,
-    float * output, // [batch_size, seq_len, dim]
+    const float* __restrict__ Q, // [batch_size, seq_len, dim]
+    const float* __restrict__ K,
+    const float* __restrict__ V,
+    float* __restrict__ output, // [batch_size, seq_len, dim]
     int batch_size,
     int seq_len,
     int dim
