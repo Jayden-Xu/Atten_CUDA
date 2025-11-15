@@ -44,6 +44,7 @@ def benchmark():
     start_event = torch.cuda.Event(enable_timing = True)
     end_event = torch.cuda.Event(enable_timing = True)
 
+    '''
     # sliding window atten
     for _ in range(num_warmup):
         _ = sliding_window_atten.sliding_window_atten(Q, K, V, window_size_in_blocks)
@@ -56,6 +57,7 @@ def benchmark():
     torch.cuda.synchronize()
 
     avg_sw_time_ms = start_event.elapsed_time(end_event) / num_iterations
+    '''
 
     # flash atten
     for _ in range(num_warmup):
@@ -69,7 +71,7 @@ def benchmark():
     torch.cuda.synchronize()
 
     avg_flash_time_ms = start_event.elapsed_time(end_event) / num_iterations
-    '''
+    
     # naive atten
     for _ in range(num_warmup):
         _ = naive_atten.naive_atten(Q, K, V)
@@ -82,15 +84,15 @@ def benchmark():
     torch.cuda.synchronize()
 
     avg_naive_time_ms = start_event.elapsed_time(end_event) / num_iterations
-    '''
+    
 
     print(f"Setup: Batch={batch_size}, SeqLen={seq_len}, Dim={dim}")
-    print(f"Average Sliding Window Atten time: {avg_sw_time_ms:.3f} ms")
+    #print(f"Average Sliding Window Atten time: {avg_sw_time_ms:.3f} ms")
     print(f"Average Flash Atten time: {avg_flash_time_ms:.3f} ms")
-    #print(f"Average Naive Atten time: {avg_naive_time_ms:.3f} ms")
+    print(f"Average Naive Atten time: {avg_naive_time_ms:.3f} ms")
 
-    print(f"Sliding Window Speedup: {avg_flash_time_ms / avg_sw_time_ms:.3f}x")
-    #print(f"Flash Speedup: {avg_naive_time_ms / avg_flash_time_ms:.3f}x")
+    #print(f"Sliding Window Speedup: {avg_flash_time_ms / avg_sw_time_ms:.3f}x")
+    print(f"Flash Speedup: {avg_naive_time_ms / avg_flash_time_ms:.3f}x")
 
 if __name__ == '__main__':
     benchmark()

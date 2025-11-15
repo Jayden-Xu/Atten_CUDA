@@ -1,4 +1,4 @@
-// The sliding window attention is implemented based on flash attention
+// The block sparse attention is implemented based on flash attention
 
 #include <torch/extension.h>
 #include <cuda.h>
@@ -10,7 +10,7 @@ using Tensor = torch::Tensor;
 #define TILE_SIZE 32 
 #define MAX_DIM 64
 
-__global__ void sliding_window_atten_kernel(
+__global__ void block_sparse_atten_kernel(
     const float* __restrict__ Q, 
     const float* __restrict__ K,
     const float* __restrict__ V,
@@ -21,7 +21,7 @@ __global__ void sliding_window_atten_kernel(
     const int N, // seq_len
     const int d, // head_dim
     const int total_kv_blocks,
-    const int window_size_in_blocks // sliding window block size
+    const int* __restrict__ block_mask_layout // [num_q_tiles, total_kv_blocks]
 ) {
 
     extern __shared__ float sram[];
@@ -66,9 +66,11 @@ __global__ void sliding_window_atten_kernel(
     __syncthreads();
 
     // loop over KV blocks
-    int k_block_min = max(0, by - window_size_in_blocks);
-    int k_block_max = min(total_kv_blocks - 1, by + window_size_in_blocks);
-    for (int kv_idx = k_block_min; kv_idx <= k_block_max; ++kv_idx) {
+    for (int kv_idx = 0; kv_idx < total_kv_blocks; ++kv_idx) {
+        // check the mask layout
+        int mask_idx = by * total_kv_blocks + kv_idx;
+        if (block_mask_layout[mask_idx] == 0) continue;
+
         int k_start = kv_idx * TILE_SIZE;
         int k_len = min(TILE_SIZE, N - k_start);
 
@@ -133,7 +135,8 @@ __global__ void sliding_window_atten_kernel(
     }
 
     for (int r = 0; r < q_len; ++r) {
-        float inv_l = 1.0f / l_tile[r];
+        // if the entire row is masked, 0
+        float inv_l = (l_tile[r] > 0.0f) ? 1.0f / l_tile[r] : 0.0f;
         for (int c = tx; c < d; c += TILE_SIZE) {
             int o_idx = bx * N * d + (q_start + r) * d + c;
             O[o_idx] = O_tile[r * d + c] * inv_l;
@@ -147,15 +150,16 @@ __global__ void sliding_window_atten_kernel(
     }
 }
 
-Tensor sliding_window_atten(
+Tensor block_sparse_atten(
     const Tensor& Q,
     const Tensor& K,
     const Tensor& V,
-    const int window_size_in_blocks
+    const Tensor& block_mask
 ) {
     TORCH_CHECK(Q.dim() == 3, "Q must be 3D (batch, seq, dim)");
     TORCH_CHECK(K.dim() == 3, "K must be 3D (batch, seq, dim)");
     TORCH_CHECK(V.dim() == 3, "V must be 3D (batch, seq, dim)");
+    TORCH_CHECK(block_mask.dim() == 2, "block_mask must be 2D (num_q_tiles, total_kv_blocks)");
 
     int batch_size = Q.size(0);
     int N = Q.size(1);
@@ -177,10 +181,12 @@ Tensor sliding_window_atten(
 
     int total_kv_blocks = (N + TILE_SIZE - 1) / TILE_SIZE;
 
+    TORCH_CHECK(block_mask.size(0) == num_q_tiles, "block_mask dim 0 must be num_q_tiles");
+    TORCH_CHECK(block_mask.size(1) == total_kv_blocks, "block_mask dim 1 must be total_kv_blocks");
 
     size_t sram_size = (3 * TILE_SIZE * d + TILE_SIZE * TILE_SIZE + TILE_SIZE * d + 2 * TILE_SIZE) * sizeof(float);
 
-    sliding_window_atten_kernel<<<grid, block, sram_size>>>(
+    block_sparse_atten_kernel<<<grid, block, sram_size>>>(
         Q.data_ptr<float>(),
         K.data_ptr<float>(),
         V.data_ptr<float>(),
@@ -191,7 +197,7 @@ Tensor sliding_window_atten(
         N,
         d,
         total_kv_blocks,
-        window_size_in_blocks
+        block_mask.data_ptr<int>()
     );
 
     TORCH_CHECK(cudaGetLastError() == cudaSuccess, "Kernel launch failed");
@@ -200,5 +206,5 @@ Tensor sliding_window_atten(
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("sliding_window_atten", &sliding_window_atten, "Sliding Window Flash Attention CUDA");
+    m.def("block_sparse_atten", &block_sparse_atten, "General Block Sparse Flash Attention CUDA");
 }
